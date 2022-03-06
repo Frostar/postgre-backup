@@ -2,7 +2,7 @@
 set -e
 IFS=:
 
-TODAY=$(date "+%Y%m%d")
+TODAY=$(/bin/date "+%Y%m%d")
 BACKUP_DEST_FOLDER=${BACKUP_DEST_FOLDER:-/var/tmp/}
 BACKUP_DELETE_LOCAL_COPY=${BACKUP_DELETE_LOCAL_COPY:-true}
 BACKUP_S3_HOST=${BACKUP_S3_HOST:-s3.amazonaws.com}
@@ -13,7 +13,7 @@ if ${BACKUP_NO_SSL}; then
 fi
 
 put_file_to_s3(){
-    s3cmd \
+    /usr/bin/s3cmd \
         --host="${BACKUP_S3_HOST}" \
         --host-bucket="${BACKUP_S3_HOST_BUCKET}" \
         "${SSL_OPTION}" \
@@ -27,22 +27,22 @@ put_file_to_s3(){
     fi
 }
 
-mysql_backup_single() {
-    local backup_name="${BACKUP_DEST_FOLDER}${TODAY}_$1_mysqldump.sql.gz"
-    /usr/bin/mysqldump --opt -h "${MYSQL_HOST}" -u "${MYSQL_USER}" -p"${MYSQL_PASSWORD}" "$1" | gzip > "${backup_name}"
+postgre_backup_single() {
+    local backup_name="${BACKUP_DEST_FOLDER}${TODAY}_$1_postgredump.sql.gz"
+    /usr/bin/pg_dump "$1" | gzip > "${backup_name}"
     put_file_to_s3 "${backup_name}"
 }
 
-mysql_backup_all() {
-    local backup_name="${BACKUP_DEST_FOLDER}${TODAY}_all_mysqldump.sql.gz"
-    /usr/bin/mysqldump --opt -h "${MYSQL_HOST}" -u "${MYSQL_USER}" -p"${MYSQL_PASSWORD}" --all-databases | gzip > "${backup_name}"
+postgre_backup_all() {
+    local backup_name="${BACKUP_DEST_FOLDER}${TODAY}_all_postgredump.sql.gz"
+    /usr/bin/pg_dumpall | gzip > "${backup_name}"
     put_file_to_s3 "${backup_name}"
 }
 
-if [ -n "${MYSQL_HOST}" ]; then
+if [ -n "${PGHOST}" ]; then
     if [ -n "${DB_NAME}" ]; then
-        mysql_backup_single "${DB_NAME}"
+        postgre_backup_single "${DB_NAME}"
     else
-        mysql_backup_all
+        postgre_backup_all
     fi
 fi

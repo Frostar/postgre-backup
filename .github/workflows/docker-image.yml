@@ -41,5 +41,5 @@ jobs:
           context: .
           push: true
           tags: |
-            ghcr.io/frostar/mariadb-backup:latest
+            ghcr.io/frostar/postgre-backup:latest
           labels: ${{ steps.meta.outputs.labels }}

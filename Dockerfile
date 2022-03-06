@@ -1,6 +1,6 @@
 FROM alpine:latest
 
-RUN apk add --no-cache mariadb-client py3-pip py3-magic && pip install s3cmd
+RUN apk add --no-cache postgresql-client py3-pip py3-magic && pip install s3cmd
 
 COPY backup /usr/local/bin/
 RUN chmod +x /usr/local/bin/backup
