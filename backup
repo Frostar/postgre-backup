@@ -2,9 +2,7 @@
 set -e
 IFS=:
 
-TODAY=$(/bin/date "+%Y%m%d")
-BACKUP_DEST_FOLDER=${BACKUP_DEST_FOLDER:-/var/tmp/}
-BACKUP_DELETE_LOCAL_COPY=${BACKUP_DELETE_LOCAL_COPY:-true}
+TODAY=$(/bin/date "+%Y%m%d%H%M%S")
 BACKUP_S3_HOST=${BACKUP_S3_HOST:-s3.amazonaws.com}
 BACKUP_S3_HOST_BUCKET=${BACKUP_S3_HOST_BUCKET:-%(bucket)s.s3.amazonaws.com}
 
@@ -12,36 +10,110 @@ if ${BACKUP_NO_SSL}; then
     SSL_OPTION="--no-ssl"
 fi
 
+# Function to get S3 access key from file or environment variable
+get_s3_key() {
+    if [ -n "${BACKUP_S3_KEY_FILE}" ]; then
+        if [ -f "${BACKUP_S3_KEY_FILE}" ]; then
+            cat "${BACKUP_S3_KEY_FILE}" | tr -d '\n\r'
+        else
+            echo "Error: BACKUP_S3_KEY_FILE specified but file does not exist: ${BACKUP_S3_KEY_FILE}" >&2
+            exit 1
+        fi
+    elif [ -n "${BACKUP_S3_KEY}" ]; then
+        echo "${BACKUP_S3_KEY}"
+    else
+        echo "Error: Either BACKUP_S3_KEY or BACKUP_S3_KEY_FILE must be set" >&2
+        exit 1
+    fi
+}
+
+# Function to get S3 secret from file or environment variable
+get_s3_secret() {
+    if [ -n "${BACKUP_S3_SECRET_FILE}" ]; then
+        if [ -f "${BACKUP_S3_SECRET_FILE}" ]; then
+            cat "${BACKUP_S3_SECRET_FILE}" | tr -d '\n\r'
+        else
+            echo "Error: BACKUP_S3_SECRET_FILE specified but file does not exist: ${BACKUP_S3_SECRET_FILE}" >&2
+            exit 1
+        fi
+    elif [ -n "${BACKUP_S3_SECRET}" ]; then
+        echo "${BACKUP_S3_SECRET}"
+    else
+        echo "Error: Either BACKUP_S3_SECRET or BACKUP_S3_SECRET_FILE must be set" >&2
+        exit 1
+    fi
+}
+
+# Function to get PostgreSQL password from file or environment variable
+get_pg_password() {
+    if [ -n "${PGPASSWORD_FILE}" ]; then
+        if [ -f "${PGPASSWORD_FILE}" ]; then
+            cat "${PGPASSWORD_FILE}" | tr -d '\n\r'
+        else
+            echo "Error: PGPASSWORD_FILE specified but file does not exist: ${PGPASSWORD_FILE}" >&2
+            exit 1
+        fi
+    elif [ -n "${PGPASSWORD}" ]; then
+        echo "${PGPASSWORD}"
+    else
+        echo "Error: Either PGPASSWORD or PGPASSWORD_FILE must be set" >&2
+        exit 1
+    fi
+}
+
+# Function to get database name from file or environment variable
+get_db_name() {
+    if [ -n "${DB_NAME_FILE}" ]; then
+        if [ -f "${DB_NAME_FILE}" ]; then
+            cat "${DB_NAME_FILE}" | tr -d '\n\r'
+        else
+            echo "Error: DB_NAME_FILE specified but file does not exist: ${DB_NAME_FILE}" >&2
+            exit 1
+        fi
+    elif [ -n "${DB_NAME}" ]; then
+        echo "${DB_NAME}"
+    else
+        echo "Error: Either DB_NAME or DB_NAME_FILE must be set" >&2
+        exit 1
+    fi
+}
+
 put_file_to_s3(){
+    S3_KEY=$(get_s3_key)
+    S3_SECRET=$(get_s3_secret)
+
     /usr/bin/s3cmd \
         --host="${BACKUP_S3_HOST}" \
         --host-bucket="${BACKUP_S3_HOST_BUCKET}" \
         "${SSL_OPTION}" \
-        --access_key="${BACKUP_S3_KEY:?'BACKUP_AWS_KEY is required'}" \
-        --secret_key="${BACKUP_S3_SECRET:?'BACKUP_AWS_SECRET is required'}" \
+        --access_key="${S3_KEY}" \
+        --secret_key="${S3_SECRET}" \
         put "$1" \
         "${BACKUP_S3_PATH}"
 
-    if [ -n "${BACKUP_DELETE_LOCAL_COPY}" ]; then
-      rm "$1"
-    fi
+    rm "$1"
 }
 
 postgre_backup_single() {
-    local backup_name="${BACKUP_DEST_FOLDER}${TODAY}_$1_postgredump.sql.gz"
+    local backup_name="/tmp/${TODAY}_$1_postgredump.sql.gz"
+    # Set PGPASSWORD environment variable for pg_dump
+    export PGPASSWORD=$(get_pg_password)
     /usr/bin/pg_dump "$1" | gzip > "${backup_name}"
     put_file_to_s3 "${backup_name}"
 }
 
 postgre_backup_all() {
-    local backup_name="${BACKUP_DEST_FOLDER}${TODAY}_all_postgredump.sql.gz"
+    local backup_name="/tmp/${TODAY}_all_postgredump.sql.gz"
+    # Set PGPASSWORD environment variable for pg_dumpall
+    export PGPASSWORD=$(get_pg_password)
     /usr/bin/pg_dumpall | gzip > "${backup_name}"
     put_file_to_s3 "${backup_name}"
 }
 
 if [ -n "${PGHOST}" ]; then
-    if [ -n "${DB_NAME}" ]; then
-        postgre_backup_single "${DB_NAME}"
+    DB_NAME_VALUE=$(get_db_name)
+    if [ -n "${DB_NAME_VALUE}" ]; then
+        postgre_backup_single "${DB_NAME_VALUE}"
     else
         postgre_backup_all
     fi

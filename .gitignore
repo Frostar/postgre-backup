@@ -1,0 +1,12 @@
+# Git ignore file
+secrets/
+secrets/*
+**/secrets/**
+
+.cursorignore
+**/.cursorignore/**
+.cursorrules
+**/.cursorrules/**
+
+copilot-rules
+**/copilot-rules/**
