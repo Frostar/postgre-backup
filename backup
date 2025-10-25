@@ -1,48 +1,320 @@
 #!/bin/sh
-set -e
+#
+# PostgreSQL Backup Script
+#
+# This script creates secure backups of PostgreSQL databases and uploads them to S3.
+# It supports both single database and full database cluster backups.
+#
+# Security Features:
+# - Secure credential handling (file or environment variables)
+# - Input validation and sanitization
+# - Secure temporary file handling
+# - Automatic cleanup on exit
+# - Error handling and recovery
+#
+# Usage:
+#   Set required environment variables and run the script
+#   See README.md for detailed configuration options
+#
+# Author: PostgreSQL Backup Tool
+# Version: 2.0
+#
+
+set -euo pipefail
 IFS=:
 
-TODAY=$(/bin/date "+%Y%m%d")
-BACKUP_DEST_FOLDER=${BACKUP_DEST_FOLDER:-/var/tmp/}
-BACKUP_DELETE_LOCAL_COPY=${BACKUP_DELETE_LOCAL_COPY:-true}
-BACKUP_S3_HOST=${BACKUP_S3_HOST:-s3.amazonaws.com}
-BACKUP_S3_HOST_BUCKET=${BACKUP_S3_HOST_BUCKET:-%(bucket)s.s3.amazonaws.com}
+# Cleanup function for secure cleanup on exit
+cleanup() {
+    local exit_code=$?
+    # Clean up temporary files
+    find /tmp -name "*_postgredump.sql.gz" -delete 2>/dev/null || true
+    # Clear sensitive environment variables
+    unset PGPASSWORD
+    exit $exit_code
+}
+trap cleanup EXIT
 
-if ${BACKUP_NO_SSL}; then
+readonly TODAY=$(/bin/date "+%Y%m%d%H%M%S")
+readonly BACKUP_S3_HOST=${BACKUP_S3_HOST:-s3.amazonaws.com}
+readonly BACKUP_S3_HOST_BUCKET=${BACKUP_S3_HOST_BUCKET:-%(bucket)s.s3.amazonaws.com}
+
+if [ "${BACKUP_NO_SSL:-false}" = "true" ]; then
     SSL_OPTION="--no-ssl"
+else
+    SSL_OPTION=""
 fi
 
-put_file_to_s3(){
-    /usr/bin/s3cmd \
-        --host="${BACKUP_S3_HOST}" \
-        --host-bucket="${BACKUP_S3_HOST_BUCKET}" \
-        "${SSL_OPTION}" \
-        --access_key="${BACKUP_S3_KEY:?'BACKUP_AWS_KEY is required'}" \
-        --secret_key="${BACKUP_S3_SECRET:?'BACKUP_AWS_SECRET is required'}" \
-        put "$1" \
-        "${BACKUP_S3_PATH}"
-
-    if [ -n "${BACKUP_DELETE_LOCAL_COPY}" ]; then
-      rm "$1"
+# Validate that a file exists and is readable
+# Args: $1 - file path to validate
+# Returns: 0 if valid, 1 if invalid
+validate_file_path() {
+    local file_path="$1"
+    if [[ ! -f "$file_path" ]] || [[ ! -r "$file_path" ]]; then
+        echo "Error: File does not exist or is not readable: $file_path" >&2
+        return 1
     fi
 }
 
-postgre_backup_single() {
-    local backup_name="${BACKUP_DEST_FOLDER}${TODAY}_$1_postgredump.sql.gz"
-    /usr/bin/pg_dump "$1" | gzip > "${backup_name}"
-    put_file_to_s3 "${backup_name}"
+# Validate database name format and length
+# Args: $1 - database name to validate
+# Returns: 0 if valid, 1 if invalid
+validate_db_name() {
+    local db_name="$1"
+    # Check if database name contains only alphanumeric characters and underscores
+    if [[ ! "$db_name" =~ ^[a-zA-Z0-9_]+$ ]]; then
+        echo "Error: Invalid database name: $db_name. Only alphanumeric characters and underscores are allowed." >&2
+        return 1
+    fi
+    # Check length (PostgreSQL limit is 63 characters)
+    if [[ ${#db_name} -gt 63 ]]; then
+        echo "Error: Database name too long: $db_name. Maximum 63 characters allowed." >&2
+        return 1
+    fi
 }
 
-postgre_backup_all() {
-    local backup_name="${BACKUP_DEST_FOLDER}${TODAY}_all_postgredump.sql.gz"
-    /usr/bin/pg_dumpall | gzip > "${backup_name}"
-    put_file_to_s3 "${backup_name}"
+# Validate S3 path format and test connectivity
+# Args: $1 - S3 path to validate
+# Returns: 0 if valid, 1 if invalid
+validate_s3_path() {
+    local s3_path="$1"
+    # Get S3 credentials for validation
+    local s3_key s3_secret
+    s3_key=$(get_s3_key) || return 1
+    s3_secret=$(get_s3_secret) || return 1
+
+    # Test S3 connection and path validity
+    if ! /usr/bin/s3cmd \
+        --host="${BACKUP_S3_HOST}" \
+        --host-bucket="${BACKUP_S3_HOST_BUCKET}" \
+        ${SSL_OPTION:+$SSL_OPTION} \
+        --access_key="$s3_key" \
+        --secret_key="$s3_secret" \
+        ls "$s3_path" >/dev/null 2>&1; then
+        echo "Error: Cannot access S3 path: $s3_path. Check if bucket exists and credentials are valid." >&2
+        return 1
+    fi
 }
 
-if [ -n "${PGHOST}" ]; then
-    if [ -n "${DB_NAME}" ]; then
-        postgre_backup_single "${DB_NAME}"
+# Safely read file content with validation
+# Args: $1 - file path to read
+# Returns: file content with newlines/carriage returns removed
+read_file_safely() {
+    local file_path="$1"
+    validate_file_path "$file_path" || return 1
+    < "$file_path" tr -d '\n\r'
+}
+
+# Get S3 access key from file or environment variable
+# Returns: S3 access key or error message
+get_s3_key() {
+    if [ -n "${BACKUP_S3_KEY_FILE}" ]; then
+        read_file_safely "${BACKUP_S3_KEY_FILE}"
+    elif [ -n "${BACKUP_S3_KEY}" ]; then
+        echo "${BACKUP_S3_KEY}"
     else
-        postgre_backup_all
+        echo "Error: Either BACKUP_S3_KEY or BACKUP_S3_KEY_FILE must be set" >&2
+        return 1
+    fi
+}
+
+# Get S3 secret from file or environment variable
+# Returns: S3 secret or error message
+get_s3_secret() {
+    if [ -n "${BACKUP_S3_SECRET_FILE}" ]; then
+        read_file_safely "${BACKUP_S3_SECRET_FILE}"
+    elif [ -n "${BACKUP_S3_SECRET}" ]; then
+        echo "${BACKUP_S3_SECRET}"
+    else
+        echo "Error: Either BACKUP_S3_SECRET or BACKUP_S3_SECRET_FILE must be set" >&2
+        return 1
+    fi
+}
+
+# Get PostgreSQL password from file or environment variable
+# Returns: PostgreSQL password or error message
+get_pg_password() {
+    if [ -n "${PGPASSWORD_FILE}" ]; then
+        read_file_safely "${PGPASSWORD_FILE}"
+    elif [ -n "${PGPASSWORD}" ]; then
+        echo "${PGPASSWORD}"
+    else
+        echo "Error: Either PGPASSWORD or PGPASSWORD_FILE must be set" >&2
+        return 1
+    fi
+}
+
+# Get database name from file or environment variable
+# Returns: Database name or error message
+get_db_name() {
+    if [ -n "${DB_NAME_FILE}" ]; then
+        read_file_safely "${DB_NAME_FILE}"
+    elif [ -n "${DB_NAME}" ]; then
+        echo "${DB_NAME}"
+    else
+        echo "Error: Either DB_NAME or DB_NAME_FILE must be set" >&2
+        return 1
+    fi
+}
+
+# Upload file to S3 and clean up temporary file
+# Args: $1 - local file path to upload
+# Returns: 0 on success, 1 on failure
+put_file_to_s3() {
+    local s3_key s3_secret
+    s3_key=$(get_s3_key) || return 1
+    s3_secret=$(get_s3_secret) || return 1
+
+    if ! /usr/bin/s3cmd \
+        --host="${BACKUP_S3_HOST}" \
+        --host-bucket="${BACKUP_S3_HOST_BUCKET}" \
+        ${SSL_OPTION:+$SSL_OPTION} \
+        --access_key="$s3_key" \
+        --secret_key="$s3_secret" \
+        put "$1" \
+        "${BACKUP_S3_PATH}"; then
+        echo "Error: Failed to upload $1 to S3" >&2
+        return 1
+    fi
+
+    # Secure cleanup of temporary file
+    rm -f "$1"
+}
+
+# Backup a single PostgreSQL database
+# Args: $1 - database name to backup
+# Returns: 0 on success, 1 on failure
+postgre_backup_single() {
+    # Create secure temporary file
+    local backup_name
+    backup_name="/tmp/${TODAY}_${1}_postgredump.sql.gz"
+
+    # Set secure permissions on temporary file
+    touch "$backup_name" || return 1
+    chmod 600 "$backup_name" || return 1
+
+    local pg_password
+    pg_password=$(get_pg_password) || return 1
+    if ! PGPASSWORD="$pg_password" /usr/bin/pg_dump "$1" | gzip > "${backup_name}"; then
+        echo "Error: pg_dump failed for database $1" >&2
+        rm -f "$backup_name"
+        unset pg_password
+        return 1
+    fi
+    unset pg_password
+
+    # Validate backup file integrity
+    if ! validate_backup_file "$backup_name"; then
+        rm -f "$backup_name"
+        return 1
+    fi
+
+    if ! put_file_to_s3 "$backup_name"; then
+        echo "Error: Failed to upload backup to S3" >&2
+        rm -f "$backup_name"
+        return 1
+    fi
+}
+
+# Backup all PostgreSQL databases
+# Returns: 0 on success, 1 on failure
+postgre_backup_all() {
+    # Create secure temporary file
+    local backup_name
+    backup_name="/tmp/${TODAY}_all_postgredump.sql.gz"
+
+    # Set secure permissions on temporary file
+    touch "$backup_name" || return 1
+    chmod 600 "$backup_name"
+
+    local pg_password
+    pg_password=$(get_pg_password) || return 1
+    if ! PGPASSWORD="$pg_password" /usr/bin/pg_dumpall | gzip > "${backup_name}"; then
+        echo "Error: pg_dumpall failed" >&2
+        rm -f "$backup_name"
+        unset pg_password
+        return 1
+    fi
+    unset pg_password
+
+    # Validate backup file integrity
+    if ! validate_backup_file "$backup_name"; then
+        rm -f "$backup_name"
+        return 1
+    fi
+
+    if ! put_file_to_s3 "$backup_name"; then
+        echo "Error: Failed to upload backup to S3" >&2
+        rm -f "$backup_name"
+        return 1
+    fi
+}
+
+# Validate backup file integrity
+# Args: $1 - backup file path to validate
+# Returns: 0 if valid, 1 if invalid
+validate_backup_file() {
+    local backup_file="$1"
+    if [ ! -f "$backup_file" ] || [ ! -s "$backup_file" ]; then
+        echo "Error: Backup file is missing or empty: $backup_file" >&2
+        return 1
+    fi
+
+    # Check if it's a valid gzip file
+    if ! gzip -t "$backup_file" 2>/dev/null; then
+        echo "Error: Backup file is corrupted: $backup_file" >&2
+        return 1
+    fi
+}
+
+# =============================================================================
+# VALIDATION PHASE - Check all requirements before starting backup
+# =============================================================================
+
+# Validate required environment variables
+if [ -z "${PGHOST:-}" ]; then
+    echo "Error: PGHOST environment variable is required" >&2
+    exit 1
+fi
+
+if [ -z "${BACKUP_S3_PATH:-}" ]; then
+    echo "Error: BACKUP_S3_PATH environment variable is required" >&2
+    exit 1
+fi
+
+# Validate S3 path and connectivity
+if ! validate_s3_path "${BACKUP_S3_PATH}"; then
+    exit 1
+fi
+
+# Validate database name if provided
+DB_NAME_VALUE=$(get_db_name)
+if [ -n "${DB_NAME_VALUE}" ]; then
+    if ! validate_db_name "${DB_NAME_VALUE}"; then
+        exit 1
+    fi
+fi
+
+# Test database connectivity
+pg_password=$(get_pg_password) || exit 1
+if ! PGPASSWORD="$pg_password" /usr/bin/pg_isready --host="${PGHOST}" >/dev/null 2>&1; then
+    echo "Error: Cannot connect to PostgreSQL database at ${PGHOST}" >&2
+    unset pg_password
+    exit 1
+fi
+unset pg_password
+
+# =============================================================================
+# BACKUP EXECUTION PHASE
+# =============================================================================
+
+if [ -n "${DB_NAME_VALUE}" ]; then
+    if ! postgre_backup_single "${DB_NAME_VALUE}"; then
+        echo "Error: Single database backup failed" >&2
+        exit 1
+    fi
+else
+    if ! postgre_backup_all; then
+        echo "Error: Full database backup failed" >&2
+        exit 1
     fi
 fi
