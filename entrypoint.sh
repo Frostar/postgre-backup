@@ -5,7 +5,6 @@ set +e
 TZ=${TZ:-UTC}
 if [ -f "/usr/share/zoneinfo/${TZ}" ]; then
     export TZ
-    echo "Timezone set to: ${TZ}"
 else
     echo "Warning: Invalid timezone '${TZ}', using UTC as fallback"
     export TZ=UTC
