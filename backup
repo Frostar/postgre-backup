@@ -107,9 +107,9 @@ read_file_safely() {
 # Get S3 access key from file or environment variable
 # Returns: S3 access key or error message
 get_s3_key() {
-    if [ -n "${BACKUP_S3_KEY_FILE}" ]; then
+    if [ -n "${BACKUP_S3_KEY_FILE:-}" ]; then
         read_file_safely "${BACKUP_S3_KEY_FILE}"
-    elif [ -n "${BACKUP_S3_KEY}" ]; then
+    elif [ -n "${BACKUP_S3_KEY:-}" ]; then
         echo "${BACKUP_S3_KEY}"
     else
         echo "Error: Either BACKUP_S3_KEY or BACKUP_S3_KEY_FILE must be set" >&2
@@ -120,9 +120,9 @@ get_s3_key() {
 # Get S3 secret from file or environment variable
 # Returns: S3 secret or error message
 get_s3_secret() {
-    if [ -n "${BACKUP_S3_SECRET_FILE}" ]; then
+    if [ -n "${BACKUP_S3_SECRET_FILE:-}" ]; then
         read_file_safely "${BACKUP_S3_SECRET_FILE}"
-    elif [ -n "${BACKUP_S3_SECRET}" ]; then
+    elif [ -n "${BACKUP_S3_SECRET:-}" ]; then
         echo "${BACKUP_S3_SECRET}"
     else
         echo "Error: Either BACKUP_S3_SECRET or BACKUP_S3_SECRET_FILE must be set" >&2
@@ -133,9 +133,9 @@ get_s3_secret() {
 # Get PostgreSQL password from file or environment variable
 # Returns: PostgreSQL password or error message
 get_pg_password() {
-    if [ -n "${PGPASSWORD_FILE}" ]; then
+    if [ -n "${PGPASSWORD_FILE:-}" ]; then
         read_file_safely "${PGPASSWORD_FILE}"
-    elif [ -n "${PGPASSWORD}" ]; then
+    elif [ -n "${PGPASSWORD:-}" ]; then
         echo "${PGPASSWORD}"
     else
         echo "Error: Either PGPASSWORD or PGPASSWORD_FILE must be set" >&2
@@ -146,13 +146,13 @@ get_pg_password() {
 # Get database name from file or environment variable
 # Returns: Database name or error message
 get_db_name() {
-    if [ -n "${DB_NAME_FILE}" ]; then
+    if [ -n "${DB_NAME_FILE:-}" ]; then
         read_file_safely "${DB_NAME_FILE}"
-    elif [ -n "${DB_NAME}" ]; then
+    elif [ -n "${DB_NAME:-}" ]; then
         echo "${DB_NAME}"
     else
-        echo "Error: Either DB_NAME or DB_NAME_FILE must be set" >&2
-        return 1
+        echo ""  # Return empty string if not set (allows full cluster backup)
+        return 0
     fi
 }
 
