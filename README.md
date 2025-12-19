@@ -23,6 +23,7 @@ A secure Docker container for automated PostgreSQL database backups to S3-compat
 | `BACKUP_S3_HOST` | `s3.amazonaws.com` | S3-compatible service host |
 | `BACKUP_S3_HOST_BUCKET` | `%(bucket)s.s3.amazonaws.com` | S3 host bucket format |
 | `BACKUP_NO_SSL` | `false` | Disable SSL for S3 connections |
+| `BACKUP_S3_NO_VERSIONING` | `false` | Set to `true` if S3 bucket versioning is disabled (uses timestamped filenames) |
 | `TZ` | `UTC` | Timezone for backup timestamps |
 
 ### 🔐 Secret File Variables (Alternative to Direct Environment Variables)
@@ -46,9 +47,15 @@ For enhanced security, use these variables to read credentials from files:
 
 ## 📁 Backup Naming Convention
 
-Backups are named with timestamp and database information:
+By default, backups use fixed filenames (assuming S3 bucket versioning is enabled):
+- Single database: `database_name_postgredump.sql.gz`
+- All databases: `all_postgredump.sql.gz`
+
+When `BACKUP_S3_NO_VERSIONING=true`, backups include timestamps to prevent overwrites:
 - Single database: `YYYYMMDDHHMMSS_database_name_postgredump.sql.gz`
 - All databases: `YYYYMMDDHHMMSS_all_postgredump.sql.gz`
+
+**Note**: When using fixed filenames with versioning, ensure your S3 bucket has versioning enabled. Each backup will create a new version of the same object key, allowing you to access historical backups via version IDs.
 
 ---
 

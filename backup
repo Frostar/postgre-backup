@@ -37,6 +37,7 @@ trap cleanup EXIT
 readonly TODAY=$(/bin/date "+%Y%m%d%H%M%S")
 readonly BACKUP_S3_HOST=${BACKUP_S3_HOST:-s3.amazonaws.com}
 readonly BACKUP_S3_HOST_BUCKET=${BACKUP_S3_HOST_BUCKET:-%(bucket)s.s3.amazonaws.com}
+readonly BACKUP_S3_NO_VERSIONING=${BACKUP_S3_NO_VERSIONING:-false}
 
 if [ "${BACKUP_NO_SSL:-false}" = "true" ]; then
     SSL_OPTION="--no-ssl"
@@ -186,7 +187,13 @@ put_file_to_s3() {
 postgre_backup_single() {
     # Create secure temporary file
     local backup_name
-    backup_name="/tmp/${TODAY}_${1}_postgredump.sql.gz"
+    if [ "${BACKUP_S3_NO_VERSIONING}" = "true" ]; then
+        # Use timestamp when versioning is disabled
+        backup_name="/tmp/${TODAY}_${1}_postgredump.sql.gz"
+    else
+        # Use fixed name when versioning is enabled (default)
+        backup_name="/tmp/${1}_postgredump.sql.gz"
+    fi
 
     # Set secure permissions on temporary file
     touch "$backup_name" || return 1
@@ -220,7 +227,13 @@ postgre_backup_single() {
 postgre_backup_all() {
     # Create secure temporary file
     local backup_name
-    backup_name="/tmp/${TODAY}_all_postgredump.sql.gz"
+    if [ "${BACKUP_S3_NO_VERSIONING}" = "true" ]; then
+        # Use timestamp when versioning is disabled
+        backup_name="/tmp/${TODAY}_all_postgredump.sql.gz"
+    else
+        # Use fixed name when versioning is enabled (default)
+        backup_name="/tmp/all_postgredump.sql.gz"
+    fi
 
     # Set secure permissions on temporary file
     touch "$backup_name" || return 1
