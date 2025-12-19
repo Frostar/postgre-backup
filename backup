@@ -194,7 +194,7 @@ postgre_backup_single() {
 
     local pg_password
     pg_password=$(get_pg_password) || return 1
-    if ! PGPASSWORD="$pg_password" /usr/bin/pg_dump "$1" | gzip > "${backup_name}"; then
+    if ! PGPASSWORD="$pg_password" /usr/bin/pg_dump -d "$1" | gzip > "${backup_name}"; then
         echo "Error: pg_dump failed for database $1" >&2
         rm -f "$backup_name"
         unset pg_password
