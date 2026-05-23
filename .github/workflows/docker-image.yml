@@ -20,6 +20,10 @@ on:
       - LICENSE
       - .github/workflows/docker-image.yml
 
+concurrency:
+  group: docker-image-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
@@ -42,10 +46,14 @@ jobs:
         run: |
           git fetch --tags --quiet
           latest=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -1)
-          v="${latest#v}"
-          new="${v%.*}.$((${v##*.}+1))"
+          if [ -z "$latest" ]; then
+            new="0.1.0"
+          else
+            v="${latest#v}"
+            new="${v%.*}.$((${v##*.}+1))"
+          fi
           git tag "v$new" && git push origin "v$new"
-          echo "Bumped $latest -> v$new"
+          echo "Bumped ${latest:-<none>} -> v$new"
           {
             echo "full=$new"
             echo "minor=${new%.*}"
@@ -56,13 +64,19 @@ jobs:
         id: tags
         run: |
           img="$(echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')"
-          if [ "${{ github.event_name }}" = "push" ]; then
-            printf 'list=%s\n' \
-              "$img:latest,$img:${{ steps.ver.outputs.full }},$img:${{ steps.ver.outputs.minor }},$img:${{ steps.ver.outputs.major }}" \
-              >> "$GITHUB_OUTPUT"
-          else
-            printf 'list=%s\n' "$img:pr-${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
-          fi
+          echo "image=$img" >> "$GITHUB_OUTPUT"
+          {
+            echo "list<<EOF"
+            if [ "${{ github.event_name }}" = "push" ]; then
+              echo "$img:latest"
+              echo "$img:${{ steps.ver.outputs.full }}"
+              echo "$img:${{ steps.ver.outputs.minor }}"
+              echo "$img:${{ steps.ver.outputs.major }}"
+            else
+              echo "$img:pr-${{ github.event.pull_request.number }}"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-qemu-action@v4
       - uses: docker/setup-buildx-action@v4
@@ -87,7 +101,7 @@ jobs:
       - if: github.event_name == 'push'
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: ghcr.io/frostar/postgre-backup:latest
+          image-ref: ${{ steps.tags.outputs.image }}:latest
           format: sarif
           output: trivy-results.sarif
 
