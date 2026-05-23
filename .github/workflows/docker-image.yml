@@ -55,7 +55,7 @@ jobs:
       - name: Compute image tag list
         id: tags
         run: |
-          img="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          img="$(echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')"
           if [ "${{ github.event_name }}" = "push" ]; then
             printf 'list=%s\n' \
               "$img:latest,$img:${{ steps.ver.outputs.full }},$img:${{ steps.ver.outputs.minor }},$img:${{ steps.ver.outputs.major }}" \
