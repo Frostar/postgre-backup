@@ -45,16 +45,24 @@ jobs:
         if: github.event_name == 'push'
         run: |
           git fetch --tags --quiet
-          latest=$(git tag --list 'v*' --sort=-v:refname \
+          existing=$(git tag --points-at HEAD \
             | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
-            | head -1)
-          if [ -z "$latest" ]; then
-            new="0.1.0"
+            | sort -V | tail -1)
+          if [ -n "$existing" ]; then
+            new="${existing#v}"
+            echo "HEAD already tagged as $existing — reusing (idempotent re-run)"
           else
-            v="${latest#v}"
-            new="${v%.*}.$((${v##*.}+1))"
+            latest=$(git tag --list 'v*' --sort=-v:refname \
+              | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+              | head -1)
+            if [ -z "$latest" ]; then
+              new="0.1.0"
+            else
+              v="${latest#v}"
+              new="${v%.*}.$((${v##*.}+1))"
+            fi
+            echo "Next version: ${latest:-<none>} -> v$new"
           fi
-          echo "Next version: ${latest:-<none>} -> v$new"
           {
             echo "full=$new"
             echo "minor=${new%.*}"
@@ -103,6 +111,10 @@ jobs:
         if: github.event_name == 'push'
         run: |
           new_tag="v${{ steps.ver.outputs.full }}"
+          if git ls-remote --exit-code --tags origin "refs/tags/$new_tag" >/dev/null 2>&1; then
+            echo "Tag $new_tag already on origin — skipping push (idempotent re-run)"
+            exit 0
+          fi
           git tag "$new_tag"
           git push origin "$new_tag"
           echo "Tagged $new_tag"
