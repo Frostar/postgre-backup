@@ -99,7 +99,7 @@ jobs:
           provenance: false
 
       - if: github.event_name == 'push'
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ steps.tags.outputs.image }}:latest
           format: sarif
