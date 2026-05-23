@@ -2,77 +2,96 @@ name: Docker Image CI
 
 on:
   push:
-    branches: [ main, master ]
-    tags: [ 'v*' ]
+    branches: [master]
+    paths:
+      - backup
+      - entrypoint.sh
+      - s3cfg
+      - Dockerfile
+      - LICENSE
+      - .github/workflows/docker-image.yml
   pull_request:
-    branches: [ main, master ]
-  workflow_dispatch:
+    branches: [master]
+    paths:
+      - backup
+      - entrypoint.sh
+      - s3cfg
+      - Dockerfile
+      - LICENSE
+      - .github/workflows/docker-image.yml
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  build-and-push-image:
+  build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       packages: write
-      id-token: write
       security-events: write
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
+      - name: Bump version (push only)
+        id: ver
+        if: github.event_name == 'push'
+        run: |
+          git fetch --tags --quiet
+          latest=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -1)
+          v="${latest#v}"
+          new="${v%.*}.$((${v##*.}+1))"
+          git tag "v$new" && git push origin "v$new"
+          echo "Bumped $latest -> v$new"
+          {
+            echo "full=$new"
+            echo "minor=${new%.*}"
+            echo "major=${new%%.*}"
+          } >> "$GITHUB_OUTPUT"
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+      - name: Compute image tag list
+        id: tags
+        run: |
+          img="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          if [ "${{ github.event_name }}" = "push" ]; then
+            printf 'list=%s\n' \
+              "$img:latest,$img:${{ steps.ver.outputs.full }},$img:${{ steps.ver.outputs.minor }},$img:${{ steps.ver.outputs.major }}" \
+              >> "$GITHUB_OUTPUT"
+          else
+            printf 'list=%s\n' "$img:pr-${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
+          fi
 
-      - name: Log in to the Container registry
-        uses: docker/login-action@v4
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        if: github.event_name == 'push'
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata (tags, labels) for Docker
-        id: meta
-        uses: docker/metadata-action@v6
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            type=raw,value=latest,enable={{is_default_branch}}
-
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v7
+      - uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64,linux/arm64
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ steps.tags.outputs.list }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           provenance: false
 
-      - name: Run Trivy vulnerability scanner
-        if: github.event_name != 'pull_request'
+      - if: github.event_name == 'push'
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: ghcr.io/frostar/postgre-backup:latest
-          format: 'sarif'
-          output: 'trivy-results.sarif'
+          format: sarif
+          output: trivy-results.sarif
 
-      - name: Upload Trivy scan results to GitHub Security tab
-        if: github.event_name != 'pull_request'
+      - if: github.event_name == 'push'
         uses: github/codeql-action/upload-sarif@v4
         with:
-          sarif_file: 'trivy-results.sarif'
+          sarif_file: trivy-results.sarif
