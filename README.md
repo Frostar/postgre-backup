@@ -25,6 +25,7 @@ A secure Docker container for automated PostgreSQL database backups to S3-compat
 | `BACKUP_NO_SSL` | `false` | Disable SSL for S3 connections |
 | `BACKUP_S3_NO_VERSIONING` | `false` | Set to `true` if S3 bucket versioning is disabled (uses timestamped filenames) |
 | `TZ` | `UTC` | Timezone for backup timestamps |
+| `HEARTBEAT_URL` | - | Uptime Kuma push-monitor URL (`…/api/push/<token>`); pinged with `status=up` after a successful backup, `status=down` on failure |
 
 ### 🔐 Secret File Variables (Alternative to Direct Environment Variables)
 
@@ -56,6 +57,13 @@ When `BACKUP_S3_NO_VERSIONING=true`, backups include timestamps to prevent overw
 - All databases: `YYYYMMDDHHMMSS_all_postgredump.sql.gz`
 
 **Note**: When using fixed filenames with versioning, ensure your S3 bucket has versioning enabled. Each backup will create a new version of the same object key, allowing you to access historical backups via version IDs.
+
+---
+
+## 🚦 Exit Status
+
+The container exits non-zero when the backup fails, so orchestrators
+(Kubernetes Jobs, etc.) correctly report failed runs.
 
 ---
 

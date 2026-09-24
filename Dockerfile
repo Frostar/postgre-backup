@@ -1,11 +1,9 @@
 FROM alpine:3.24
 
-RUN apk add --no-cache postgresql-client s3cmd
+RUN apk add --no-cache postgresql-client s3cmd tzdata
 
 COPY backup /usr/local/bin/
 RUN chmod +x /usr/local/bin/backup
-
-RUN apk add --no-cache tzdata
 
 COPY entrypoint.sh /sbin/entrypoint.sh
 RUN chmod +x /sbin/entrypoint.sh
