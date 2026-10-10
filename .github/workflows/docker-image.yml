@@ -10,6 +10,7 @@ on:
       - Dockerfile
       - LICENSE
       - .github/workflows/docker-image.yml
+      - .github/scripts/dhi-vex.sh
   pull_request:
     branches: [master]
     paths:
@@ -19,6 +20,7 @@ on:
       - Dockerfile
       - LICENSE
       - .github/workflows/docker-image.yml
+      - .github/scripts/dhi-vex.sh
 
 concurrency:
   group: docker-image-${{ github.ref }}
@@ -27,10 +29,14 @@ concurrency:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  # renovate: datasource=docker depName=docker/scout-cli
+  SCOUT_CLI_VERSION: 1.26.0
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    # dhi environment provides DOCKERHUB_USERNAME/DOCKERHUB_TOKEN for dhi.io pulls
+    environment: dhi
     permissions:
       contents: write
       packages: write
@@ -86,6 +92,12 @@ jobs:
             fi
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
+          # Trivy scans the published image on push and a local build on PRs
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "scan=$img:latest" >> "$GITHUB_OUTPUT"
+          else
+            echo "scan=$img:pr-${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
+          fi
 
       - uses: docker/setup-qemu-action@v4
       - uses: docker/setup-buildx-action@v4
@@ -97,7 +109,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # DHI base images require authentication even for pulls (Community tier)
+      - uses: docker/login-action@v4
+        with:
+          registry: dhi.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
       - uses: docker/build-push-action@v7
+        id: build
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -119,14 +139,64 @@ jobs:
           git push origin "$new_tag"
           echo "Tagged $new_tag"
 
-      - if: github.event_name == 'push'
-        uses: aquasecurity/trivy-action@v0.36.0
+      # A multi-arch build can't be loaded into the local daemon, so PRs scan a
+      # native single-arch build of the same Dockerfile (layers from the cache)
+      - name: Build native image for scanning (PRs)
+        id: scanbuild
+        if: github.event_name != 'push'
+        uses: docker/build-push-action@v7
         with:
-          image-ref: ${{ steps.tags.outputs.image }}:latest
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: ${{ steps.tags.outputs.scan }}
+          cache-from: type=gha
+
+      # DHI publishes OpenVEX statements for its base images; export them for
+      # the exact runtime base digest this build used (see the script)
+      - name: Export DHI VEX for the runtime base image
+        id: vex
+        env:
+          BUILD_METADATA: ${{ steps.scanbuild.outputs.metadata || steps.build.outputs.metadata }}
+          DOCKER_SCOUT_HUB_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKER_SCOUT_HUB_PASSWORD: ${{ secrets.DOCKERHUB_TOKEN }}
+          DOCKER_SCOUT_REGISTRY_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKER_SCOUT_REGISTRY_PASSWORD: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: .github/scripts/dhi-vex.sh linux/amd64 dhi-vex.json
+
+      - name: Trivy scan (SARIF)
+        uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          TRIVY_VEX: ${{ steps.vex.outputs.file }}
+        with:
+          image-ref: ${{ steps.tags.outputs.scan }}
           format: sarif
           output: trivy-results.sarif
 
-      - if: github.event_name == 'push'
-        uses: github/codeql-action/upload-sarif@v4
+      - name: Trivy summary (lists VEX-suppressed findings)
+        uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          TRIVY_VEX: ${{ steps.vex.outputs.file }}
+          TRIVY_SHOW_SUPPRESSED: "true"
+          TRIVY_SKIP_DB_UPDATE: "true"
+          TRIVY_SKIP_JAVA_DB_UPDATE: "true"
+        with:
+          image-ref: ${{ steps.tags.outputs.scan }}
+          format: table
+          output: trivy-results.txt
+          skip-setup-trivy: true
+          cache: false
+
+      - name: Publish Trivy summary
+        run: |
+          {
+            echo "### Trivy: \`${{ steps.tags.outputs.scan }}\` (linux/amd64)"
+            echo "DHI VEX: \`${{ steps.vex.outputs.file || 'none published for the base image' }}\`"
+            echo '```'
+            cat trivy-results.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-results.sarif

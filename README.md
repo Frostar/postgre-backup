@@ -40,8 +40,10 @@ For enhanced security, use these variables to read credentials from files:
 
 ## 🛡️ Security Features
 
+- **Hardened base image**: Built on [Docker Hardened Images](https://docs.docker.com/dhi/) (`dhi.io/alpine-base`), a minimal runtime without a package manager. PostgreSQL client, Python and the shared libraries come from DHI's hardened package repository; only s3cmd (and its `py3-magic` dependency) comes from stock Alpine, because DHI does not carry it. The apk database is kept in the image so scanners such as Trivy see every installed package. Pulling the base images requires `docker login dhi.io` with Docker Hub credentials.
+- **Image scanning with DHI VEX**: CI scans the image with Trivy on pull requests (a local amd64 build) and after every publish, and uploads the results to GitHub code scanning. It first exports the OpenVEX statements that DHI publishes for the exact `dhi.io/alpine-base` digest the build used (`.github/scripts/dhi-vex.sh`, via Docker Scout), so findings DHI has triaged as `not_affected` are suppressed; the job summary lists them. `alpine-base` currently publishes no VEX, in which case the scan runs without it.
 - **Read-only filesystem**: Container runs with read-only root filesystem
-- **Non-root user**: Runs as `backupuser` instead of root
+- **Non-root user**: Runs as the built-in `nonroot` user (uid 65532) instead of root. The s3cmd config is located via `S3CMD_CONFIG`, so the image also works when run as another uid (e.g. `runAsUser` in Kubernetes)
 - **No new privileges**: Security option prevents privilege escalation
 - **Temporary filesystem**: Uses tmpfs for temporary storage with size limits
 - **Secret file support**: Credentials can be stored in Docker secrets
