@@ -40,8 +40,9 @@ For enhanced security, use these variables to read credentials from files:
 
 ## 🛡️ Security Features
 
+- **Hardened base image**: Built on [Docker Hardened Images](https://docs.docker.com/dhi/) (`dhi.io/alpine-base`) — minimal, near-zero-CVE runtime without a package manager (pulling the base images requires `docker login dhi.io` with Docker Hub credentials)
 - **Read-only filesystem**: Container runs with read-only root filesystem
-- **Non-root user**: Runs as `backupuser` instead of root
+- **Non-root user**: Runs as the built-in `nonroot` user (uid 65532) instead of root
 - **No new privileges**: Security option prevents privilege escalation
 - **Temporary filesystem**: Uses tmpfs for temporary storage with size limits
 - **Secret file support**: Credentials can be stored in Docker secrets
