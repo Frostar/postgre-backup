@@ -31,6 +31,8 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # dhi environment provides DOCKERHUB_USERNAME/DOCKERHUB_TOKEN for dhi.io pulls
+    environment: dhi
     permissions:
       contents: write
       packages: write
